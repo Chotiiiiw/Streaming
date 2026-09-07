@@ -8,6 +8,8 @@ import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
 import org.apache.flink.util.Collector;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -21,6 +23,10 @@ import java.util.Set;
 public final class FraudScoringFunction
         extends KeyedProcessFunction<String, Transaction, ScoredTransaction> {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(
+            FraudScoringFunction.class
+    );
+
     private static final Duration VELOCITY_WINDOW = Duration.ofMinutes(3);
     private static final Duration SPENDING_WINDOW = Duration.ofMinutes(5);
     private static final Duration COUNTRY_WINDOW = Duration.ofMinutes(30);
@@ -31,6 +37,7 @@ public final class FraudScoringFunction
 
     private transient ListState<Transaction> recentTransactions;
     private transient ListState<BigDecimal> baselineAmounts;
+    private transient boolean firstTransactionLogged;
 
     @Override
     public void open(OpenContext openContext) {
@@ -53,6 +60,7 @@ public final class FraudScoringFunction
                 StateTtlConfig.newBuilder(Duration.ofDays(30)).build()
         );
         baselineAmounts = getRuntimeContext().getListState(baselineDescriptor);
+        firstTransactionLogged = false;
     }
 
     @Override
@@ -61,6 +69,15 @@ public final class FraudScoringFunction
             Context context,
             Collector<ScoredTransaction> collector
     ) throws Exception {
+        if (!firstTransactionLogged) {
+            LOGGER.info(
+                    "Received first valid transaction from MSK; "
+                            + "Kafka source connection and fraud scoring "
+                            + "pipeline are active."
+            );
+            firstTransactionLogged = true;
+        }
+
         List<Transaction> recent = recentTransactions(current.eventTime);
         List<BigDecimal> baseline = values(baselineAmounts.get());
         BigDecimal baselineAverage = average(baseline);

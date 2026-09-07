@@ -111,17 +111,32 @@ data "aws_iam_policy_document" "producer" {
   }
 
   statement {
-    sid    = "CreateAndWriteTopics"
+    sid    = "AccessTopics"
     effect = "Allow"
 
     actions = [
       "kafka-cluster:CreateTopic",
       "kafka-cluster:DescribeTopic",
+      "kafka-cluster:ReadData",
       "kafka-cluster:WriteData"
     ]
 
     resources = [
       local.msk_topic_arn
+    ]
+  }
+
+  statement {
+    sid    = "InspectConsumerGroups"
+    effect = "Allow"
+
+    actions = [
+      "kafka-cluster:DescribeGroup",
+      "kafka-cluster:AlterGroup"
+    ]
+
+    resources = [
+      local.msk_group_arn
     ]
   }
 }
