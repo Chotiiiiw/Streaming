@@ -12,6 +12,10 @@ flink/lib/*.jar
 # Maven build output
 **/target/
 
+# Lambda build output
+producer/build/
+producer/*.zip
+
 # Editors
 .vscode/
 .idea/

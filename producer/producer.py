@@ -2,10 +2,9 @@ import argparse
 import json
 import os
 import time
-import uuid
-from datetime import datetime, timezone
 
 from kafka import KafkaProducer
+from transaction_generator import StatisticalTransactionGenerator
 
 
 def parse_args():
@@ -30,19 +29,19 @@ def parse_args():
         default=5,
         help="Number of unique users to generate.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Optional random seed for reproducible transactions.",
+    )
+    parser.add_argument(
+        "--mean-gap-seconds",
+        type=float,
+        default=90.0,
+        help="Average simulated event-time gap between normal orders.",
+    )
     return parser.parse_args()
-
-
-def create_transaction(index, user_count):
-    return {
-        "transaction_id": f"tx_{uuid.uuid4().hex}",
-        "user_id": f"user_{index % user_count}",
-        "amount": (index + 1) * 100,
-        "country": "TH",
-        "event_time": datetime.now(timezone.utc)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z"),
-    }
 
 
 def main():
@@ -55,11 +54,22 @@ def main():
         raise ValueError("--interval cannot be negative")
 
     if args.users <= 0:
-        raise ValueError("--users must be greater that zero")
+        raise ValueError("--users must be greater than zero")
+
+    if args.mean_gap_seconds <= 0:
+        raise ValueError("--mean-gap-seconds must be greater than zero")
+
     bootstrap_servers = os.getenv(
         "KAFKA_BOOTSTRAP_SERVERS",
         "localhost:9092",
     )
+
+    generator = StatisticalTransactionGenerator(
+        user_count=args.users,
+        seed=args.seed,
+        mean_gap_seconds=args.mean_gap_seconds,
+    )
+    transactions = generator.generate(args.count)
 
     producer = KafkaProducer(
         bootstrap_servers=bootstrap_servers,
@@ -70,8 +80,7 @@ def main():
     )
 
     try:
-        for index in range(args.count):
-            transaction = create_transaction(index, args.users)
+        for transaction in transactions:
             message_key = transaction["user_id"]
             metadata = producer.send(
                 topic="transactions_raw",
@@ -84,7 +93,7 @@ def main():
                 f"topic={metadata.topic}, "
                 f"partition={metadata.partition}, "
                 f"offset={metadata.offset}, "
-                f"transaction={transaction}"
+                f"transaction={transaction}, "
                 f"key={message_key}"
             )
 

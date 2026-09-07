@@ -55,6 +55,12 @@ variable "flink_runtime_environment" {
   default     = "FLINK-2_2"
 }
 
+variable "lambda_producer_zip_path" {
+  description = "Path to the packaged Lambda producer ZIP, relative to this Terraform directory unless absolute."
+  type        = string
+  default     = "../../producer/build/lambda-producer.zip"
+}
+
 variable "flink_start_application" {
   description = "Whether Terraform should start the Managed Flink application. Keep false while reviewing to avoid Flink runtime charges."
   type        = bool

@@ -32,3 +32,13 @@ output "flink_log_group_name" {
   description = "CloudWatch log group for the Managed Flink application."
   value       = aws_cloudwatch_log_group.flink.name
 }
+
+output "producer_function_name" {
+  description = "Name of the manually invoked Lambda transaction producer."
+  value       = aws_lambda_function.producer.function_name
+}
+
+output "producer_log_group_name" {
+  description = "CloudWatch log group for the Lambda transaction producer."
+  value       = aws_cloudwatch_log_group.producer.name
+}
