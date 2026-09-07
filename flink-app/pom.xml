@@ -26,6 +26,7 @@
         <flink.kafka.version>5.0.0-2.2</flink.kafka.version>
         <aws.kinesis.analytics.runtime.version>1.2.0</aws.kinesis.analytics.runtime.version>
         <aws.msk.iam.auth.version>2.3.7</aws.msk.iam.auth.version>
+        <slf4j.version>2.0.17</slf4j.version>
         <junit.version>5.13.4</junit.version>
 
         <maven.compiler.plugin.version>3.14.1</maven.compiler.plugin.version>
@@ -79,6 +80,14 @@
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-kinesisanalytics-runtime</artifactId>
             <version>${aws.kinesis.analytics.runtime.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Supplied by the Flink runtime -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
             <scope>provided</scope>
         </dependency>
 

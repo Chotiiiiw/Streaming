@@ -13,6 +13,8 @@ import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.types.Row;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -25,6 +27,10 @@ import java.util.regex.Pattern;
 import static org.apache.flink.table.api.Expressions.$;
 
 public final class TransactionRoutingJob {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(
+            TransactionRoutingJob.class
+    );
 
     private TransactionRoutingJob() {
         // Prevent accidental construction of this application class.
@@ -49,8 +55,8 @@ public final class TransactionRoutingJob {
         ApplicationConfig applicationConfig =
                 ApplicationConfig.load();
 
-        System.out.println("Transaction routing job initialized successfully.");
-        System.out.println(
+        LOGGER.info("Transaction routing job initialized successfully.");
+        LOGGER.info(
                 "Flink parallelism: "
                         + executionEnvironment.getParallelism()
         );
@@ -125,7 +131,7 @@ public final class TransactionRoutingJob {
 
         TableResult routingResult = routingStatements.execute();
 
-        System.out.println("Transaction routing job submitted successfully.");
+        LOGGER.info("Transaction routing job submitted successfully.");
         routingResult.await();
     }
 
@@ -196,7 +202,7 @@ public final class TransactionRoutingJob {
                 resourcePath
         );
 
-        System.out.println("Executing SQL resource: " + resourcePath);
+        LOGGER.info("Executing SQL resource: {}", resourcePath);
         return tableEnvironment.executeSql(renderedSql);
     }
 
