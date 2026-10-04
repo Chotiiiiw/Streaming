@@ -59,34 +59,18 @@ def main():
     if args.mean_gap_seconds <= 0:
         raise ValueError("--mean-gap-seconds must be greater than zero")
 
-    bootstrap_servers = os.getenv(
-        "KAFKA_BOOTSTRAP_SERVERS",
-        "localhost:9092",
-    )
-
-    generator = StatisticalTransactionGenerator(
-        user_count=args.users,
-        seed=args.seed,
-        mean_gap_seconds=args.mean_gap_seconds,
-    )
+    # kafka's bootstrap servers
+    bootstrap_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS","localhost:9092")
+    # generate simulated transactions
+    generator = StatisticalTransactionGenerator(user_count=args.users, seed=args.seed, mean_gap_seconds=args.mean_gap_seconds)
     transactions = generator.generate(args.count)
-
-    producer = KafkaProducer(
-        bootstrap_servers=bootstrap_servers,
-        acks="all",
-        retries=5,
-        key_serializer=lambda key: key.encode("utf-8"),
-        value_serializer=lambda value: json.dumps(value).encode("utf-8"),
-    )
+    # create kafka producer and encode keys and values
+    producer = KafkaProducer(bootstrap_servers=bootstrap_servers, acks="all", retries=5, key_serializer=lambda key: key.encode("utf-8"), value_serializer=lambda value: json.dumps(value).encode("utf-8"))
 
     try:
         for transaction in transactions:
             message_key = transaction["user_id"]
-            metadata = producer.send(
-                topic="transactions_raw",
-                key=message_key,
-                value=transaction,
-            ).get(timeout=10)
+            metadata = producer.send(topic="transactions_raw", key=message_key, value=transaction).get(timeout=10)
 
             print(
                 f"acknowledged: "
@@ -98,6 +82,7 @@ def main():
             )
 
             time.sleep(args.interval)
+    # Send any buffered messages and release the Kafka connection.
     finally:
         producer.flush()
         producer.close()

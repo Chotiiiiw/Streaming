@@ -27,64 +27,32 @@ import java.util.regex.Pattern;
 import static org.apache.flink.table.api.Expressions.$;
 
 public final class TransactionRoutingJob {
-
-    private static final Logger LOGGER = LoggerFactory.getLogger(
-            TransactionRoutingJob.class
-    );
+    private static final Logger LOGGER = LoggerFactory.getLogger( TransactionRoutingJob.class);
 
     private TransactionRoutingJob() {
         // Prevent accidental construction of this application class.
     }
 
     public static void main(String[] args) throws Exception {
-        StreamExecutionEnvironment executionEnvironment =
-                StreamExecutionEnvironment.getExecutionEnvironment();
-
-        EnvironmentSettings environmentSettings =
-                EnvironmentSettings.newInstance()
-                        .inStreamingMode()
-                        .build();
-
-        StreamTableEnvironment tableEnvironment =
-                StreamTableEnvironment.create(
-                        executionEnvironment,
-                        environmentSettings
-                );
+        // create Flink environments
+        StreamExecutionEnvironment executionEnvironment = StreamExecutionEnvironment.getExecutionEnvironment();
+        EnvironmentSettings environmentSettings = EnvironmentSettings.newInstance().inStreamingMode().build();
+        StreamTableEnvironment tableEnvironment = StreamTableEnvironment.create(executionEnvironment, environmentSettings);
         tableEnvironment.getConfig().setLocalTimeZone(ZoneId.of("UTC"));
-
-        ApplicationConfig applicationConfig =
-                ApplicationConfig.load();
+        // load application configuration
+        ApplicationConfig applicationConfig = ApplicationConfig.load();
 
         LOGGER.info("Transaction routing job initialized successfully.");
-        LOGGER.info(
-                "Flink parallelism: "
-                        + executionEnvironment.getParallelism()
-        );
+        LOGGER.info("Flink parallelism: " + executionEnvironment.getParallelism());
 
-        executeSqlResource(
-                tableEnvironment,
-                "sql/01-source.sql",
-                applicationConfig
-        );
-        executeSqlResource(
-                tableEnvironment,
-                "sql/02-clean-sink.sql",
-                applicationConfig
-        );
-        executeSqlResource(
-                tableEnvironment,
-                "sql/03-fraud-sink.sql",
-                applicationConfig
-        );
-        executeSqlResource(
-                tableEnvironment,
-                "sql/04-dlq-sink.sql",
-                applicationConfig
-        );
+        // register the Kafka source and sinks
+        executeSqlResource(tableEnvironment,"sql/01-source.sql", applicationConfig);
+        executeSqlResource(tableEnvironment,"sql/02-clean-sink.sql", applicationConfig);
+        executeSqlResource(tableEnvironment,"sql/03-fraud-sink.sql",applicationConfig);
+        executeSqlResource(tableEnvironment,"sql/04-dlq-sink.sql",applicationConfig);
 
-        Table rawTransactions = tableEnvironment
-                .from("transactions_raw_source")
-                .select(
+        // read the source table
+        Table rawTransactions = tableEnvironment.from("transactions_raw_source").select(
                         $("transaction_id"),
                         $("user_id"),
                         $("amount"),
@@ -92,49 +60,29 @@ public final class TransactionRoutingJob {
                         $("event_time")
                 );
 
-        SingleOutputStreamOperator<Transaction> validTransactions =
-                tableEnvironment
-                        .toDataStream(rawTransactions)
-                        .map(TransactionRoutingJob::toTransaction)
-                        .returns(Transaction.class)
-                        .process(new TransactionValidationFunction());
-
-        DataStream<InvalidTransaction> invalidTransactions =
-                validTransactions.getSideOutput(
-                        TransactionValidationFunction.INVALID_TRANSACTIONS
-                );
-
-        SingleOutputStreamOperator<ScoredTransaction> scoredTransactions =
-                validTransactions
-                        .keyBy(transaction -> transaction.userId)
-                        .process(new FraudScoringFunction());
-
-        DataStream<ScoredTransaction> cleanTransactions = scoredTransactions
-                .filter(transaction -> !"HIGH".equals(transaction.riskLevel));
-
-        DataStream<ScoredTransaction> fraudAlerts = scoredTransactions
-                .filter(transaction -> "HIGH".equals(transaction.riskLevel));
-
+        // convert rows and validate transactions
+        SingleOutputStreamOperator<Transaction> validTransactions = tableEnvironment.toDataStream(rawTransactions).map(TransactionRoutingJob::toTransaction).returns(Transaction.class).process(new TransactionValidationFunction());
+        // retrieve invalid transactions
+        DataStream<InvalidTransaction> invalidTransactions =validTransactions.getSideOutput(TransactionValidationFunction.INVALID_TRANSACTIONS);
+        // group by user and calculate fraud scores
+        SingleOutputStreamOperator<ScoredTransaction> scoredTransactions = validTransactions.keyBy(transaction -> transaction.userId).process(new FraudScoringFunction());
+        
+        // split clean and high-risk transactions
+        DataStream<ScoredTransaction> cleanTransactions = scoredTransactions.filter(transaction -> !"HIGH".equals(transaction.riskLevel));
+        DataStream<ScoredTransaction> fraudAlerts = scoredTransactions.filter(transaction -> "HIGH".equals(transaction.riskLevel));
+        // Connect the streams to sink tables
         StatementSet routingStatements = tableEnvironment.createStatementSet();
-        routingStatements.addInsert(
-                "clean_transactions_sink",
-                scoredTable(tableEnvironment, cleanTransactions)
-        );
-        routingStatements.addInsert(
-                "fraud_alerts_sink",
-                scoredTable(tableEnvironment, fraudAlerts)
-        );
-        routingStatements.addInsert(
-                "transactions_dlq_sink",
-                invalidTable(tableEnvironment, invalidTransactions)
-        );
-
+        routingStatements.addInsert("clean_transactions_sink", scoredTable(tableEnvironment, cleanTransactions));
+        routingStatements.addInsert("fraud_alerts_sink", scoredTable(tableEnvironment, fraudAlerts));
+        routingStatements.addInsert("transactions_dlq_sink", invalidTable(tableEnvironment, invalidTransactions));
+        
+        // Start the streaming job
         TableResult routingResult = routingStatements.execute();
 
         LOGGER.info("Transaction routing job submitted successfully.");
         routingResult.await();
     }
-
+    // Convert a generic row into a transaction
     private static Transaction toTransaction(Row row) {
         return new Transaction(
                 row.getFieldAs(0),
@@ -144,11 +92,8 @@ public final class TransactionRoutingJob {
                 row.getFieldAs(4)
         );
     }
-
-    private static Table scoredTable(
-            StreamTableEnvironment tableEnvironment,
-            DataStream<ScoredTransaction> transactions
-    ) {
+    // Convert scored transactions into a Table
+    private static Table scoredTable(StreamTableEnvironment tableEnvironment, DataStream<ScoredTransaction> transactions) {
         return tableEnvironment
                 .fromDataStream(transactions)
                 .select(
@@ -156,26 +101,18 @@ public final class TransactionRoutingJob {
                         $("userId").as("user_id"),
                         $("amount").cast(DataTypes.DECIMAL(18, 2)),
                         $("country"),
-                        $("eventTime")
-                                .cast(DataTypes.TIMESTAMP_LTZ(3))
-                                .as("event_time"),
+                        $("eventTime").cast(DataTypes.TIMESTAMP_LTZ(3)).as("event_time"),
                         $("velocityScore").as("velocity_score"),
-                        $("amountAnomalyScore")
-                                .as("amount_anomaly_score"),
-                        $("spendingBurstScore")
-                                .as("spending_burst_score"),
-                        $("countrySwitchScore")
-                                .as("country_switch_score"),
+                        $("amountAnomalyScore").as("amount_anomaly_score"),
+                        $("spendingBurstScore").as("spending_burst_score"),
+                        $("countrySwitchScore").as("country_switch_score"),
                         $("riskScore").as("risk_score"),
                         $("riskLevel").as("risk_level"),
                         $("riskReasons").as("risk_reasons")
                 );
     }
-
-    private static Table invalidTable(
-            StreamTableEnvironment tableEnvironment,
-            DataStream<InvalidTransaction> transactions
-    ) {
+    // Convert invalid transactions into a Table
+    private static Table invalidTable(StreamTableEnvironment tableEnvironment, DataStream<InvalidTransaction> transactions) {
         return tableEnvironment
                 .fromDataStream(transactions)
                 .select(
@@ -183,34 +120,20 @@ public final class TransactionRoutingJob {
                         $("userId").as("user_id"),
                         $("amount").cast(DataTypes.DECIMAL(18, 2)),
                         $("country"),
-                        $("eventTime")
-                                .cast(DataTypes.TIMESTAMP_LTZ(3))
-                                .as("event_time"),
+                        $("eventTime").cast(DataTypes.TIMESTAMP_LTZ(3)).as("event_time"),
                         $("errorReason").as("error_reason")
                 );
     }
-
-    private static TableResult executeSqlResource(
-            StreamTableEnvironment tableEnvironment,
-            String resourcePath,
-            ApplicationConfig applicationConfig
-    ) throws IOException {
+    // Load and execute one SQL resource
+    private static TableResult executeSqlResource(StreamTableEnvironment tableEnvironment, String resourcePath, ApplicationConfig applicationConfig) throws IOException {
         String sqlTemplate = readSqlResource(resourcePath);
-        String renderedSql = renderSqlTemplate(
-                sqlTemplate,
-                applicationConfig,
-                resourcePath
-        );
+        String renderedSql = renderSqlTemplate(sqlTemplate, applicationConfig, resourcePath);
 
         LOGGER.info("Executing SQL resource: {}", resourcePath);
         return tableEnvironment.executeSql(renderedSql);
     }
-
-    private static String renderSqlTemplate(
-            String sqlTemplate,
-            ApplicationConfig config,
-            String resourcePath
-    ) {
+    // Define SQL-placeholder values
+    private static String renderSqlTemplate(String sqlTemplate, ApplicationConfig config, String resourcePath) {
         Map<String, String> replacements = Map.ofEntries(
                 Map.entry(
                         "KAFKA_BOOTSTRAP_SERVERS",
@@ -251,16 +174,12 @@ public final class TransactionRoutingJob {
                         config.saslCallbackHandler()
                 )
         );
-
+        // Replace SQL placeholders
         String renderedSql = sqlTemplate;
 
-        for (Map.Entry<String, String> replacement
-                : replacements.entrySet()) {
+        for (Map.Entry<String, String> replacement: replacements.entrySet()) {
             String placeholder = "{{" + replacement.getKey() + "}}";
-            renderedSql = renderedSql.replace(
-                    placeholder,
-                    escapeSqlValue(replacement.getValue())
-            );
+            renderedSql = renderedSql.replace(placeholder, escapeSqlValue(replacement.getValue()));
         }
 
         Matcher unresolvedPlaceholder = Pattern
@@ -283,22 +202,15 @@ public final class TransactionRoutingJob {
         return value.replace("'", "''");
     }
 
-    private static String readSqlResource(String resourcePath)
-            throws IOException {
+    private static String readSqlResource(String resourcePath) throws IOException {
         ClassLoader classLoader = TransactionRoutingJob.class.getClassLoader();
 
-        try (InputStream inputStream =
-                     classLoader.getResourceAsStream(resourcePath)) {
+        try (InputStream inputStream = classLoader.getResourceAsStream(resourcePath)) {
             if (inputStream == null) {
-                throw new IllegalArgumentException(
-                        "SQL resource not found: " + resourcePath
-                );
+                throw new IllegalArgumentException("SQL resource not found: " + resourcePath);
             }
 
-            return new String(
-                    inputStream.readAllBytes(),
-                    StandardCharsets.UTF_8
-            );
+            return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
         }
     }
 }

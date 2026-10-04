@@ -5,7 +5,7 @@ import com.streaming.fraud.model.Transaction;
 import org.apache.flink.streaming.api.functions.ProcessFunction;
 import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
-
+// use bigdecimal to avoid floating-point error
 import java.math.BigDecimal;
 
 public final class TransactionValidationFunction

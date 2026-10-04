@@ -15,18 +15,15 @@ LOGGER.setLevel(logging.INFO)
 
 def lambda_handler(event, context):
     event = event or {}
+    # read operating modes
     initialize_only = bool(event.get("initialize_only", False))
     inspect_only = bool(event.get("inspect_only", False))
-
+    # prepare Kafka
     kafka_config = _kafka_config()
     topics = _topics()
     created_topics = _ensure_topics(kafka_config, topics)
-    LOGGER.info(
-        "Successfully connected to Kafka; topics ready: %s; created=%s",
-        ",".join(topics.values()),
-        ",".join(created_topics) if created_topics else "none",
-    )
-
+    LOGGER.info("Successfully connected to Kafka; topics ready: %s; created=%s", ",".join(topics.values()), ",".join(created_topics) if created_topics else "none")
+    # initialize-only branch
     if initialize_only:
         return {
             "statusCode": 200,
@@ -35,32 +32,19 @@ def lambda_handler(event, context):
             "created_topics": created_topics,
             "published": 0,
         }
-
+    
+    # inspection branch
     if inspect_only:
         sample_limit = _positive_int(event, "sample_limit", 3)
-        samples = _inspect_topics(
-            kafka_config,
-            [
-                topics["clean_transactions"],
-                topics["fraud_alerts"],
-                topics["transactions_dlq"],
-            ],
-            sample_limit,
-        )
-        LOGGER.info(
-            "Kafka output inspection complete: %s",
-            ",".join(
-                f"{topic}={len(records)}"
-                for topic, records in samples.items()
-            ),
-        )
+        samples = _inspect_topics(kafka_config, [topics["clean_transactions"], topics["fraud_alerts"], topics["transactions_dlq"],], sample_limit,)
+        LOGGER.info("Kafka output inspection complete: %s", ",".join(f"{topic}={len(records)}" for topic, records in samples.items()))
         return {
             "statusCode": 200,
             "initialized": True,
             "topics": list(topics.values()),
             "samples": samples,
         }
-
+    # choose the transaction source
     scenario = event.get("scenario")
     scenario_id = None
 
@@ -73,32 +57,17 @@ def lambda_handler(event, context):
     else:
         count = _positive_int(event, "count", 10)
         users = _positive_int(event, "users", 5)
-        mean_gap_seconds = _positive_float(
-            event,
-            "mean_gap_seconds",
-            90.0,
-        )
+        mean_gap_seconds = _positive_float(event, "mean_gap_seconds", 90.0)
         seed = event.get("seed")
 
         if seed is not None:
             seed = int(seed)
 
-        generator = StatisticalTransactionGenerator(
-            user_count=users,
-            seed=seed,
-            mean_gap_seconds=mean_gap_seconds,
-        )
+        generator = StatisticalTransactionGenerator(user_count=users, seed=seed, mean_gap_seconds=mean_gap_seconds)
         transactions = generator.generate(count)
-    published = _publish_transactions(
-        kafka_config,
-        topics["transactions_raw"],
-        transactions,
-    )
-    LOGGER.info(
-        "Published %d transactions to %s",
-        published,
-        topics["transactions_raw"],
-    )
+    # all three transaction sources converge here:
+    published = _publish_transactions(kafka_config, topics["transactions_raw"], transactions)
+    LOGGER.info("Published %d transactions to %s", published, topics["transactions_raw"])
 
     return {
         "statusCode": 200,
@@ -110,13 +79,13 @@ def lambda_handler(event, context):
         "scenario_id": scenario_id,
     }
 
-
+# build the connection and authentication settings used by every Kafka client.
 def _kafka_config():
     from aws_msk_iam_sasl_signer import MSKAuthTokenProvider
     from kafka.net.sasl.oauth import AbstractTokenProvider
-
+    # read the AWS region
     region = _required_environment("AWS_REGION")
-
+    # MSK token provider
     class LambdaMskTokenProvider(AbstractTokenProvider):
         def token(self):
             token, _ = MSKAuthTokenProvider.generate_auth_token(region)
@@ -133,35 +102,33 @@ def _kafka_config():
         "request_timeout_ms": 30000,
     }
 
-
+# collect the Kafka topic names from Lambda environment variables.
 def _topics():
     return {
-        "transactions_raw": _required_environment(
-            "TRANSACTIONS_RAW_TOPIC"
-        ),
-        "clean_transactions": _required_environment(
-            "CLEAN_TRANSACTIONS_TOPIC"
-        ),
+        "transactions_raw": _required_environment("TRANSACTIONS_RAW_TOPIC"),
+        "clean_transactions": _required_environment("CLEAN_TRANSACTIONS_TOPIC"),
         "fraud_alerts": _required_environment("FRAUD_ALERTS_TOPIC"),
-        "transactions_dlq": _required_environment(
-            "TRANSACTIONS_DLQ_TOPIC"
-        ),
+        "transactions_dlq": _required_environment("TRANSACTIONS_DLQ_TOPIC")
     }
 
-
+# ensure all required Kafka topics exist
 def _ensure_topics(kafka_config, topics):
     from kafka.admin import KafkaAdminClient, NewTopic
-
+    
+    #create an administrative Kafka client
     admin_client = KafkaAdminClient(**kafka_config)
 
     try:
+        # retrieves the existing topics
         existing_topics = set(admin_client.list_topics())
+        # desired partition configuration
         topic_partitions = {
             topics["transactions_raw"]: 3,
             topics["clean_transactions"]: 1,
             topics["fraud_alerts"]: 1,
             topics["transactions_dlq"]: 1,
         }
+        # missing topics become NewTopic objects
         missing_topics = [
             NewTopic(
                 name=topic_name,
@@ -171,18 +138,16 @@ def _ensure_topics(kafka_config, topics):
             for topic_name, partition_count in topic_partitions.items()
             if topic_name not in existing_topics
         ]
-
+        # create missing topics if exists
         if missing_topics:
-            admin_client.create_topics(
-                new_topics=missing_topics,
-                validate_only=False,
-            )
+            admin_client.create_topics(new_topics=missing_topics, validate_only=False)
 
         return [topic.name for topic in missing_topics]
+    # clean up
     finally:
         admin_client.close()
 
-
+# publish transaction dictionaries to the raw Kafka topic
 def _publish_transactions(kafka_config, topic, transactions):
     from kafka import KafkaProducer
 
@@ -195,14 +160,7 @@ def _publish_transactions(kafka_config, topic, transactions):
     )
 
     try:
-        acknowledgements = [
-            producer.send(
-                topic=topic,
-                key=transaction["user_id"],
-                value=transaction,
-            )
-            for transaction in transactions
-        ]
+        acknowledgements = [producer.send(topic=topic, key=transaction["user_id"], value=transaction) for transaction in transactions]
 
         for acknowledgement in acknowledgements:
             acknowledgement.get(timeout=30)
@@ -212,7 +170,7 @@ def _publish_transactions(kafka_config, topic, transactions):
     finally:
         producer.close()
 
-
+# read recent processed records from Flink’s output topics.
 def _inspect_topics(kafka_config, topic_names, sample_limit):
     from kafka import KafkaConsumer
 
@@ -245,7 +203,7 @@ def _inspect_topics(kafka_config, topic_names, sample_limit):
 
     return samples
 
-
+# perform basic validation on transactions supplied directly in the Lambda event.
 def _explicit_transactions(transactions):
     if not isinstance(transactions, list) or not transactions:
         raise ValueError("transactions must be a non-empty list")
@@ -273,25 +231,18 @@ def _explicit_transactions(transactions):
 
     return transactions
 
-
+# generate a predictable end-to-end demonstration dataset.
 def _evidence_transactions():
     scenario_id = uuid.uuid4().hex[:8]
     user_id = f"evidence_user_{scenario_id}"
     end_time = datetime.now(timezone.utc)
 
     transactions = []
+    # Baseline records, five transactions:
     for index, minutes_before in enumerate((20, 16, 12, 8, 4), start=1):
-        transactions.append(
-            _scenario_transaction(
-                scenario_id,
-                f"clean_{index}",
-                user_id,
-                100.0,
-                "TH",
-                end_time - timedelta(minutes=minutes_before),
-            )
-        )
+        transactions.append(_scenario_transaction(scenario_id, f"clean_{index}", user_id, 100.0, "TH", end_time - timedelta(minutes=minutes_before)))
 
+    # Fraud inputs, five transactions
     fraud_inputs = (
         ("fraud_1", 1000.0, "SG", 50),
         ("fraud_2", 1200.0, "US", 40),
@@ -299,39 +250,15 @@ def _evidence_transactions():
         ("fraud_4", 1800.0, "SG", 20),
         ("fraud_5", 2200.0, "US", 10),
     )
-    for transaction_id, amount, country, seconds_before in fraud_inputs:
-        transactions.append(
-            _scenario_transaction(
-                scenario_id,
-                transaction_id,
-                user_id,
-                amount,
-                country,
-                end_time - timedelta(seconds=seconds_before),
-            )
-        )
 
-    transactions.append(
-        _scenario_transaction(
-            scenario_id,
-            "invalid_1",
-            user_id,
-            -10.0,
-            "TH",
-            end_time,
-        )
-    )
+    for transaction_id, amount, country, seconds_before in fraud_inputs:
+        transactions.append(_scenario_transaction(scenario_id, transaction_id, user_id, amount, country, end_time - timedelta(seconds=seconds_before)))
+    # Invalid input
+    transactions.append( _scenario_transaction(scenario_id, "invalid_1", user_id, -10.0, "TH", end_time))
     return scenario_id, transactions
 
-
-def _scenario_transaction(
-    scenario_id,
-    transaction_id,
-    user_id,
-    amount,
-    country,
-    event_time,
-):
+# construct one consistently formatted evidence transaction.
+def _scenario_transaction(scenario_id, transaction_id, user_id, amount, country, event_time):
     return {
         "transaction_id": f"evidence_{scenario_id}_{transaction_id}",
         "user_id": user_id,
@@ -343,7 +270,7 @@ def _scenario_transaction(
         ),
     }
 
-
+# retrieve a mandatory environment variable.
 def _required_environment(name):
     value = os.getenv(name)
 
@@ -352,7 +279,7 @@ def _required_environment(name):
 
     return value.strip()
 
-
+# retrieve and validate a positive integer from the Lambda event.
 def _positive_int(event, name, default):
     value = int(event.get(name, default))
 
@@ -361,7 +288,7 @@ def _positive_int(event, name, default):
 
     return value
 
-
+# retrieve and validate a positive integer from the Lambda event
 def _positive_float(event, name, default):
     value = float(event.get(name, default))
 
