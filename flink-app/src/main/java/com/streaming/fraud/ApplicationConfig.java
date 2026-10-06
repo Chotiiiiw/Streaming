@@ -16,6 +16,7 @@ public record ApplicationConfig(
         String transactionsDlqTopic,
         String groupId,
         String startupMode,
+        String s3OutputPath,
         String securityProtocol,
         String saslMechanism,
         String saslJaasConfig,
@@ -47,6 +48,7 @@ public record ApplicationConfig(
         );
         groupId = requireNonBlank(groupId, "groupId");
         startupMode = requireNonBlank(startupMode, "startupMode");
+        s3OutputPath = requireNonBlank(s3OutputPath, "s3OutputPath");
         securityProtocol = requireNonBlank(
                 securityProtocol,
                 "securityProtocol"
@@ -118,6 +120,12 @@ public record ApplicationConfig(
                         environment,
                         "KAFKA_STARTUP_MODE",
                         "latest-offset"
+                ),
+                resolve(
+                        runtimeProperties,
+                        environment,
+                        "S3_OUTPUT_PATH",
+                        "file:///tmp/flink-output/transactions"
                 ),
                 resolve(
                         runtimeProperties,

@@ -8,6 +8,16 @@ output "flink_artifact_key" {
   value       = aws_s3_object.flink_application.key
 }
 
+output "transaction_data_bucket_name" {
+  description = "S3 bucket containing scored transaction output from Flink."
+  value       = aws_s3_bucket.data.id
+}
+
+output "transaction_data_prefix" {
+  description = "S3 prefix containing scored transaction output from Flink."
+  value       = "s3://${aws_s3_bucket.data.id}/curated/transactions/"
+}
+
 output "flink_application_name" {
   description = "Name of the Managed Service for Apache Flink application."
   value       = aws_kinesisanalyticsv2_application.flink.name

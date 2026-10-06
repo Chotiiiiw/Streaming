@@ -95,6 +95,36 @@ data "aws_iam_policy_document" "flink" {
   }
 
   statement {
+    sid    = "ListTransactionDataBucket"
+    effect = "Allow"
+
+    actions = [
+      "s3:GetBucketLocation",
+      "s3:ListBucket",
+      "s3:ListBucketMultipartUploads"
+    ]
+
+    resources = [
+      aws_s3_bucket.data.arn
+    ]
+  }
+
+  statement {
+    sid    = "WriteTransactionData"
+    effect = "Allow"
+
+    actions = [
+      "s3:AbortMultipartUpload",
+      "s3:ListMultipartUploadParts",
+      "s3:PutObject"
+    ]
+
+    resources = [
+      "${aws_s3_bucket.data.arn}/*"
+    ]
+  }
+
+  statement {
     sid    = "DescribeLogs"
     effect = "Allow"
 

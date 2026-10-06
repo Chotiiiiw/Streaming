@@ -41,6 +41,22 @@ class ApplicationConfigTest {
     }
 
     @Test
+    void environmentProvidesS3OutputPath() {
+        ApplicationConfig config = ApplicationConfig.fromSources(
+                Map.of(),
+                Map.of(
+                        "S3_OUTPUT_PATH",
+                        "s3a://example-data/curated/transactions"
+                )
+        );
+
+        assertEquals(
+                "s3a://example-data/curated/transactions",
+                config.s3OutputPath()
+        );
+    }
+
+    @Test
     void missingValuesUseLocalDefaults() {
         ApplicationConfig config = ApplicationConfig.fromSources(
                 Map.of(),
@@ -54,6 +70,7 @@ class ApplicationConfigTest {
         assertEquals("transactions_dlq", config.transactionsDlqTopic());
         assertEquals("transaction-router-v1", config.groupId());
         assertEquals("latest-offset", config.startupMode());
+        assertEquals("file:///tmp/flink-output/transactions",config.s3OutputPath());
         assertEquals("PLAINTEXT", config.securityProtocol());
         assertEquals("AWS_MSK_IAM", config.saslMechanism());
         assertEquals(

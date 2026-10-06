@@ -45,11 +45,12 @@ public final class TransactionRoutingJob {
         LOGGER.info("Transaction routing job initialized successfully.");
         LOGGER.info("Flink parallelism: " + executionEnvironment.getParallelism());
 
-        // register the Kafka source and sinks
+        // register the Kafka source and Kafka/S3 sinks
         executeSqlResource(tableEnvironment,"sql/01-source.sql", applicationConfig);
         executeSqlResource(tableEnvironment,"sql/02-clean-sink.sql", applicationConfig);
         executeSqlResource(tableEnvironment,"sql/03-fraud-sink.sql",applicationConfig);
         executeSqlResource(tableEnvironment,"sql/04-dlq-sink.sql",applicationConfig);
+        executeSqlResource(tableEnvironment,"sql/05-s3-sink.sql",applicationConfig);
 
         // read the source table
         Table rawTransactions = tableEnvironment.from("transactions_raw_source").select(
@@ -75,6 +76,7 @@ public final class TransactionRoutingJob {
         routingStatements.addInsert("clean_transactions_sink", scoredTable(tableEnvironment, cleanTransactions));
         routingStatements.addInsert("fraud_alerts_sink", scoredTable(tableEnvironment, fraudAlerts));
         routingStatements.addInsert("transactions_dlq_sink", invalidTable(tableEnvironment, invalidTransactions));
+        routingStatements.addInsert("transactions_s3_sink", scoredTable(tableEnvironment, scoredTransactions));
         
         // Start the streaming job
         TableResult routingResult = routingStatements.execute();
@@ -157,6 +159,7 @@ public final class TransactionRoutingJob {
                 ),
                 Map.entry("KAFKA_GROUP_ID", config.groupId()),
                 Map.entry("KAFKA_STARTUP_MODE", config.startupMode()),
+                Map.entry("S3_OUTPUT_PATH", config.s3OutputPath()),
                 Map.entry(
                         "KAFKA_SECURITY_PROTOCOL",
                         config.securityProtocol()
