@@ -5,7 +5,46 @@ locals {
     "${var.project_name}-${var.environment}-${data.aws_caller_identity.current.account_id}-${var.aws_region}"
   )
 
+  data_bucket_name = lower(
+    "${var.project_name}-${var.environment}-data-${data.aws_caller_identity.current.account_id}-${var.aws_region}"
+  )
+
   flink_jar_path = abspath(var.flink_jar_path)
+}
+
+resource "aws_s3_bucket" "data" {
+  bucket = local.data_bucket_name
+
+  tags = {
+    Name = local.data_bucket_name
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "data" {
+  bucket = aws_s3_bucket.data.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_ownership_controls" "data" {
+  bucket = aws_s3_bucket.data.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "data" {
+  bucket = aws_s3_bucket.data.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
 }
 
 resource "aws_s3_bucket" "artifacts" {

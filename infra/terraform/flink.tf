@@ -36,6 +36,7 @@ resource "aws_kinesisanalyticsv2_application" "flink" {
           TRANSACTIONS_DLQ_TOPIC      = var.kafka_topics.transactions_dlq
           KAFKA_GROUP_ID              = var.kafka_group_id
           KAFKA_STARTUP_MODE          = "latest-offset"
+          S3_OUTPUT_PATH              = "s3a://${aws_s3_bucket.data.id}/curated/transactions"
           KAFKA_SECURITY_PROTOCOL     = "SASL_SSL"
           KAFKA_SASL_MECHANISM        = "AWS_MSK_IAM"
           KAFKA_SASL_JAAS_CONFIG      = "software.amazon.msk.auth.iam.IAMLoginModule required;"
